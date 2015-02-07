@@ -2,20 +2,21 @@ Building Command Line Applications in Go
 
 Jack Christensen
 @j3c10
-http://www.jackchristensen.com
+http://www.jackchristensen.com/
 
 * Why Go for CLI Applications?
 
 - Cross-platform
 - Minimal dependencies - no interpreter or runtime
 - Better stdlib than C
+- Fast startup
 
 * Argument Parsing
 
 - os.Args
 - flag
-- github.com/jessevdk/go-flags
-- github.com/codegangsta/cli
+- [[https://github.com/jessevdk/go-flags]]
+- [[https://github.com/codegangsta/cli]]
 
 * os.Args
 
@@ -121,6 +122,7 @@ http://www.jackchristensen.com
 - GNU style options
 - Bash completion
 - Access options by name instead of structure binding
+- Opinionated about program structure
 
 * github.com/codegangsta/cli Code
 
@@ -179,8 +181,8 @@ http://www.jackchristensen.com
 
 * Argument Parsing Summary
 
-- For subcommands, use github.com/codegangsta/cli
-- For GNU-style options, use github.com/jessevdk/go-flags
+- For subcommands, use [[https://github.com/codegangsta/cli]]
+- For GNU-style options, use [[https://github.com/jessevdk/go-flags]]
 - For Go-style options and to avoid dependencies, use flag
 - For really simple arguments, use os.Args
 
@@ -192,7 +194,7 @@ Package ioutil makes basic file IO really simple.
   func ReadFile(filename string) ([]byte, error)
   func WriteFile(filename string, data []byte, perm os.FileMode) error
 
-Package os has tradition file types and functions.
+Package os has traditional file types and functions.
 
 - *os.File implements io.Reader and io.Writer
 
@@ -225,23 +227,175 @@ Package os has tradition file types and functions.
 
 * Configuration Files
 
-ini - github.com/vaughan0/go-ini
+ini - [[https://github.com/vaughan0/go-ini]]
 
 - Simple to work with
 - All string data
 - One level of hierarchy
 
-YAML - https://github.com/go-yaml/yaml
+YAML - [[https://github.com/go-yaml/yaml]]
 
 - Structure binding
 - Parse to map[string]interface{}
 - LGPL with linking exception
+- Tab vs. space
 
 JSON - encoding/json
 
 - JSON does not allow comments
 
-* Process Management
+* Syncronous Process Management
 
-* Structure
+os/exec Cmd offers high-level process operations.
 
+.code os_exec.go
+
+* Asyncronous Process Control
+
+os.StartProcess offers low-level process control.
+
+- Full path to process
+- Working directory
+- Argv (including invocation name as first argument)
+- Environment
+- Files for stdin, stdout, stderr
+
+* Example of Low-Level Process Control with React2fs
+
+React2fs is a file system watcher that runs a process when the file system changes.
+
+  jack@edi:~/dev/go/src/github.com/jackc/pgx$ react2fs go test
+  PASS
+  ok    github.com/jackc/pgx  0.499s
+  2014/10/04 11:41:04 "./doc.go": CHMOD
+  PASS
+  ok    github.com/jackc/pgx  0.443s
+  2014/10/04 11:47:01 "./hstore.go": CHMOD
+  PASS
+  ok    github.com/jackc/pgx  0.499s
+
+It can also run a server and restart it when the file system changes.
+
+- Use rake or shell script to make a single command that builds then runs server
+- See https://github.com/jackc/tpr
+
+* Process Wrapper in React2fs
+
+  type Process struct {
+    CmdPath  string
+    Argv     []string
+    procAttr *os.ProcAttr
+    process  *os.Process
+  }
+
+* Starting a Process in React2fs
+
+  func StartProcess(argv []string) (*Process, error) {
+    var wp Process
+    var err error
+
+    wp.CmdPath, err = exec.LookPath(argv[0])
+    // Snip error handling
+
+    wp.Argv = argv
+
+    workingDir, err := os.Getwd()
+    // Snip error handling
+
+    wp.procAttr = &os.ProcAttr{
+      Dir:   workingDir,
+      Files: []*os.File{nil, os.Stdout, os.Stderr},
+      Env:   os.Environ(),
+    }
+
+    err = wp.Restart()
+    return &wp, err
+  }
+
+* Killing a Process in React2fs p. 3
+
+  killErr := process.Kill() // process is *os.Process
+
+  waitDone := make(chan bool)
+  waitErr := make(chan error)
+
+  go func() {
+    _, err := process.Wait()
+    if err != nil {
+      waitErr <- err
+    } else {
+      waitDone <- true
+    }
+  }()
+
+  select {
+  case <-waitDone:
+    return nil
+  case err := <-waitErr:
+    return err
+  case <-time.After(10 * time.Second):
+    if killErr != nil {
+      return killErr
+    }
+    return errors.New("Timeout waiting for process to terminate")
+  }
+
+* Consider Extracting Core Logic to Separate Package
+
+- Easier to test and reuse core login
+- golang.org/x/tools/present vs golang.org/x/tools/cmd/present
+- go test ./...
+- main() can't be called from tests
+
+* Integration Testing
+
+Examples using gocheck - https://labix.org/gocheck
+
+Build binary in test setup.
+
+  func (s *TernSuite) SetUpSuite(c *C) {
+    err := exec.Command("go", "build", "-o", "tmp/tern").Run()
+    c.Assert(err, IsNil)
+
+Wrap execution in helper method.
+
+  func (s *TernSuite) tern(c *C, args ...string) {
+    cmd := exec.Command("tmp/tern", args...)
+    output, err := cmd.CombinedOutput()
+    if err != nil {
+      c.Fatalf("tern failed with: %v\noutput:\n%v", err, string(output))
+    }
+  }
+
+* Integration Testing p. 2
+
+Tests read cleanly.
+
+  func (s *TernSuite) TestNew(c *C) {
+    path := "tmp/new"
+    defer func() {
+      os.RemoveAll(path)
+    }()
+
+    s.tern(c, "init", path)
+    s.tern(c, "new", "-m", path, "first")
+
+    _, err := os.Stat("tmp/new/001_first.sql")
+    c.Assert(err, IsNil)
+
+    s.tern(c, "new", "-m", path, "second")
+
+    _, err = os.Stat("tmp/new/002_second.sql")
+    c.Assert(err, IsNil)
+  }
+
+* Source Material
+
+Examples principally drawn from following projects:
+
+- [[https://github.com/jackc/react2fs]] Run command in reaction to file system events
+- [[https://github.com/jackc/tern]] The SQL Fan's Migrator
+- [[https://github.com/jackc/overload]] - HTTP load tester
+- [[https://github.com/jackc/tpr]] The Pithy Reader - RSS Reader
+
+Slides in "present" format at: [[https://github.com/jackc/chicagolang-feb-2015]]
