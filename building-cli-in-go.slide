@@ -1,0 +1,247 @@
+Building Command Line Applications in Go
+
+Jack Christensen
+@j3c10
+http://www.jackchristensen.com
+
+* Why Go for CLI Applications?
+
+- Cross-platform
+- Minimal dependencies - no interpreter or runtime
+- Better stdlib than C
+
+* Argument Parsing
+
+- os.Args
+- flag
+- github.com/jessevdk/go-flags
+- github.com/codegangsta/cli
+
+* os.Args
+
+- Built-in
+- Most simple
+- No help printing
+- Equivalent of argv in C
+
+.code os_args_echo.go
+
+* flag
+
+- Built-in
+- Simple
+- Sub-commands take a bit of work
+- No GNU style options
+- Structure binding by calling functions
+
+* flag Code
+
+  var options struct {
+    dir     string
+    include string
+    exclude string
+    version bool
+  }
+
+  func main() {
+    flag.Usage = func() {
+      fmt.Fprintf(os.Stderr, "usage:  %s [options] command\n", os.Args[0])
+      flag.PrintDefaults()
+    }
+
+    flag.StringVar(&options.dir, "dir", ".", "directories to watch (separate multiple directories with commas)")
+    flag.StringVar(&options.include, "include", "", "only watch files matching this regexp")
+    flag.StringVar(&options.exclude, "exclude", "", "don't watch files matching this regexp")
+    flag.BoolVar(&options.version, "version", false, "print version and exit")
+    flag.Parse()
+
+    if options.version {
+      fmt.Printf("react2fs v%v\n", Version)
+      os.Exit(0)
+    }
+
+* flag Help Output
+
+  jack@hk-3~$ react2fs
+  usage:  react2fs [options] command
+    -dir=".": directories to watch (separate multiple directories with commas)
+    -exclude="": don't watch files matching this regexp
+    -include="": only watch files matching this regexp
+    -version=false: print version and exit
+
+* github.com/jessevdk/go-flags
+
+- GNU style options
+- Structure binding by struct tags
+
+* github.com/jessevdk/go-flags Code
+
+  var opts struct {
+    NumRequests int      `short:"r" long:"num-requests" description:"Number of requests to make" default:"1"`
+    Concurrent  int      `short:"c" long:"concurrent" description:"Number of concurrent connections to make" default:"1"`
+    KeepAlive   bool     `short:"k" long:"keep-alive" description:"Use keep alive connection"`
+    Headers     []string `short:"H" long:"header" description:"Header to include in request (can be used multiple times)"`
+    NoGzip      bool     `long:"no-gzip" description:"Disable gzip accept encoding"`
+    SecureTLS   bool     `long:"secure-tls" description:"Validate TLS certificates"`
+    Version     bool     `long:"version" description:"Display version and exit"`
+  }
+
+  // ...
+
+  var err error
+  var args []string
+
+  parser := flags.NewParser(&opts, flags.Default)
+  parser.Usage = "[options] URL"
+  if args, err = parser.Parse(); err != nil {
+    return
+  }
+
+* github.com/jessevdk/go-flags Code
+
+  jack@hk-3~$ overload -h
+  Usage:
+    overload [options] URL
+
+  Application Options:
+    -r, --num-requests= Number of requests to make (1)
+    -c, --concurrent=   Number of concurrent connections to make (1)
+    -k, --keep-alive    Use keep alive connection
+    -H, --header=       Header to include in request (can be used multiple times)
+        --no-gzip       Disable gzip accept encoding
+        --secure-tls    Validate TLS certificates
+        --version       Display version and exit
+
+  Help Options:
+    -h, --help          Show this help message
+
+* github.com/codegangsta/cli
+
+- Git style subcommand support
+- GNU style options
+- Bash completion
+- Access options by name instead of structure binding
+
+* github.com/codegangsta/cli Code
+
+
+  app := cli.NewApp()
+  app.Name = "tern"
+  app.Usage = "PostgreSQL database migrator"
+  app.Version = VERSION
+  app.Author = "Jack Christensen"
+  app.Email = "jack@jackchristensen.com"
+
+* github.com/codegangsta/cli Code p. 2
+
+  app.Commands = []cli.Command{
+    // ...
+    {
+      Name:        "migrate",
+      ShortName:   "m",
+      Usage:       "migrate the database",
+      Synopsis:    "[command options]",
+      Description: "migrate the database to destination version",
+      Flags: []cli.Flag{
+        cli.StringFlag{"destination, d", "last", "Destination migration version"},
+        cli.StringFlag{"migrations, m", ".", "Migrations path"},
+        cli.StringFlag{"config, c", "tern.conf", "Config path"},
+      },
+      Action: Migrate,
+    },
+    // ...
+  }
+
+  app.Run(os.Args)
+
+* github.com/codegangsta/cli Help Output
+
+
+  jack@hk-3~$ tern
+  NAME:
+     tern - PostgreSQL database migrator
+
+  SYNOPSIS:
+     tern [global options] command [command options] [arguments...]
+
+  VERSION:
+     1.3.1
+
+  COMMANDS:
+     init, i  init a new tern project
+     migrate, m migrate the database
+     new, n generate a new migration
+     help, h  Shows a list of commands or help for one command
+
+  GLOBAL OPTIONS:
+     --version, -v  print the version
+     --help, -h   show help
+
+* Argument Parsing Summary
+
+- For subcommands, use github.com/codegangsta/cli
+- For GNU-style options, use github.com/jessevdk/go-flags
+- For Go-style options and to avoid dependencies, use flag
+- For really simple arguments, use os.Args
+
+* Really Simple File IO
+
+Package ioutil makes basic file IO really simple.
+
+  func ReadDir(dirname string) ([]os.FileInfo, error)
+  func ReadFile(filename string) ([]byte, error)
+  func WriteFile(filename string, data []byte, perm os.FileMode) error
+
+Package os has tradition file types and functions.
+
+- *os.File implements io.Reader and io.Writer
+
+* Configuration with Environment Variables
+
+- func os.Getenv(key string) string
+
+  func extractConfig() pgx.ConnConfig {
+    var config pgx.ConnConfig
+
+    config.Host = os.Getenv("PG_HOST")
+    if config.Host == "" {
+      config.Host = "localhost"
+    }
+
+    config.User = os.Getenv("PG_USER")
+    if config.User == "" {
+      config.User = os.Getenv("USER")
+    }
+
+    config.Password = os.Getenv("PG_PASSWORD")
+
+    config.Database = os.Getenv("PG_DATABASE")
+    if config.Database == "" {
+      config.Database = config.User
+    }
+
+    return config
+  }
+
+* Configuration Files
+
+ini - github.com/vaughan0/go-ini
+
+- Simple to work with
+- All string data
+- One level of hierarchy
+
+YAML - https://github.com/go-yaml/yaml
+
+- Structure binding
+- Parse to map[string]interface{}
+- LGPL with linking exception
+
+JSON - encoding/json
+
+- JSON does not allow comments
+
+* Process Management
+
+* Structure
+
